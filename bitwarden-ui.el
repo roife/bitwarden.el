@@ -139,18 +139,42 @@
 (defun bitwarden-ui-open ()
   "Open Bitwarden, authenticating and synchronizing when necessary."
   (interactive)
-  (bitwarden-api-status
-   :on-success
-   (lambda (data _job)
-     (pcase (intern (downcase (bitwarden-json-get 'status data "unknown")))
-       ('unauthenticated (bitwarden-login #'bitwarden-ui--ready))
-       ('locked (bitwarden-unlock #'bitwarden-ui--ready))
-       ('unlocked
-        (if (bitwarden-session-active-p)
-            (bitwarden-ui--ready)
-          (bitwarden-unlock #'bitwarden-ui--ready)))
-       (status (message "Unknown Bitwarden status: %s" status))))
-   :on-error #'bitwarden-ui--error))
+  (let ((buffer (get-buffer-create bitwarden-ui--navigator-buffer)))
+    (cl-labels
+        ((render-status
+          (heading &optional message)
+          (when (buffer-live-p buffer)
+            (with-current-buffer buffer
+              (bitwarden-navigation-mode)
+              (let ((inhibit-read-only t))
+                (erase-buffer)
+                (magit-insert-section (bitwarden-root-section)
+                  (insert (propertize "Bitwarden\n"
+                                      'face '(:height 1.4 :weight bold)))
+                  (magit-insert-section (bitwarden-group-section 'status)
+                    (magit-insert-heading heading)
+                    (when message (insert message "\n")))))))))
+      (render-status "Loading Bitwarden…")
+      (bitwarden-ui--display-buffer buffer)
+      (redisplay t)
+      (bitwarden-api-status
+       :on-success
+       (lambda (data _job)
+         (pcase (intern (downcase (bitwarden-json-get 'status data "unknown")))
+           ('unauthenticated (bitwarden-login #'bitwarden-ui--ready))
+           ('locked (bitwarden-unlock #'bitwarden-ui--ready))
+           ('unlocked
+            (if (bitwarden-session-active-p)
+                (bitwarden-ui--ready)
+              (bitwarden-unlock #'bitwarden-ui--ready)))
+           (status
+            (render-status "Unable to load Bitwarden"
+                           (format "Unknown vault status: %s" status)))))
+       :on-error
+       (lambda (error-info job)
+         (render-status "Unable to load Bitwarden"
+                        (bitwarden-cli-error-message error-info))
+         (bitwarden-ui--error error-info job))))))
 
 (defun bitwarden-ui--ready ()
   "Open the navigator and apply the configured initial sync policy."

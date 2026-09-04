@@ -90,6 +90,30 @@
       (should (equal (bitwarden-json-get 'status status) "locked"))
       (should (eq bitwarden--status 'locked)))))
 
+(ert-deftest bitwarden-test-open-shows-loading-before-status ()
+  (bitwarden-test--with-fake
+    (let (loading-content)
+      (cl-letf (((symbol-function 'bitwarden-api-status)
+                 (lambda (&rest _args)
+                   (setq loading-content
+                         (with-current-buffer bitwarden-ui--navigator-buffer
+                           (buffer-string))))))
+        (save-window-excursion
+          (bitwarden-ui-open)
+          (let ((buffer (get-buffer bitwarden-ui--navigator-buffer)))
+            (should (string-match-p "Loading Bitwarden" loading-content))
+            (should (eq (buffer-local-value 'major-mode buffer)
+                        'bitwarden-navigation-mode))
+            (bitwarden--set-session "fake-session-key")
+            (cl-letf (((symbol-function 'bitwarden-navigation-refresh)
+                       #'ignore))
+              (bitwarden-navigation-open))
+            (should (eq buffer (get-buffer bitwarden-ui--navigator-buffer)))
+            (with-current-buffer buffer
+              (should (string-match-p "Vault" (buffer-string)))
+              (should-not (string-match-p "Loading Bitwarden"
+                                          (buffer-string))))))))))
+
 (ert-deftest bitwarden-test-unlock-keeps-session-out-of-argv ()
   (bitwarden-test--with-fake
     (let ((password "master-secret") result failure)

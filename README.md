@@ -30,11 +30,12 @@ If `bw` is not on `exec-path`:
 (setq bitwarden-executable "/absolute/path/to/bw")
 ```
 
-`M-x bitwarden` checks status, offers login or unlock when needed, opens the
-navigator, and synchronizes the vault.  Password, API-key, SSO, authenticator,
-email, and YubiKey OTP login paths are supported.  Users whose accounts require
-FIDO2 or Duo must use their personal API key because those methods are not
-available in the CLI.
+`M-x bitwarden` immediately opens the navigator with a loading indicator, then
+checks status, offers login or unlock when needed, and replaces that indicator
+with the loaded vault.  Password, API-key, SSO, authenticator, email, and
+YubiKey OTP login paths are supported.  Users whose accounts require FIDO2 or
+Duo must use their personal API key because those methods are not available in
+the CLI.
 
 For a self-hosted server, run `M-x bitwarden-configure-server`.  Use a
 prefix argument to configure individual API, identity, icons, events,
