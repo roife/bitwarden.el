@@ -26,6 +26,13 @@
     (4 . "Identity")
     (5 . "SSH Key")))
 
+(defconst bitwarden-ui--item-type-faces
+  '((1 . font-lock-function-name-face)
+    (2 . font-lock-doc-face)
+    (3 . font-lock-number-face)
+    (4 . font-lock-type-face)
+    (5 . font-lock-constant-face)))
+
 (defconst bitwarden-ui--login-match-types
   '((0 . "Domain")
     (1 . "Host")
@@ -45,6 +52,36 @@
 (defclass bitwarden-group-section (magit-section) ())
 (defclass bitwarden-navigation-entry-section (magit-section)
   ((keymap :initform 'bitwarden-navigation-entry-section-map)))
+
+(defface bitwarden-title
+  '((t :inherit magit-section-heading :height 1.25))
+  "Face used for Bitwarden buffer titles."
+  :group 'bitwarden)
+
+(defface bitwarden-field-label
+  '((t :inherit font-lock-keyword-face))
+  "Face used for field labels."
+  :group 'bitwarden)
+
+(defface bitwarden-secret
+  '((t :inherit shadow))
+  "Face used for masked secrets."
+  :group 'bitwarden)
+
+(defface bitwarden-revealed-secret
+  '((t :inherit warning))
+  "Face used for revealed secrets."
+  :group 'bitwarden)
+
+(defface bitwarden-status-unlocked
+  '((t :inherit success :weight bold))
+  "Face used for the unlocked status."
+  :group 'bitwarden)
+
+(defface bitwarden-status-locked
+  '((t :inherit warning :weight bold))
+  "Face used for locked or unauthenticated status."
+  :group 'bitwarden)
 
 (defvar-local bitwarden-list-kind nil)
 (defvar-local bitwarden-list-filter nil)
@@ -82,13 +119,18 @@
   (let* ((status bitwarden--status)
          (data bitwarden--status-data)
          (email (and data (bitwarden-json-get 'userEmail data)))
-         (server (and data (bitwarden-json-get 'serverUrl data))))
+         (server (and data (bitwarden-json-get 'serverUrl data)))
+         (status-label
+          (propertize (capitalize (symbol-name status))
+                      'face (if (eq status 'unlocked)
+                                'bitwarden-status-unlocked
+                              'bitwarden-status-locked))))
     (string-join
      (delq nil
-           (list (format "Status: %s" (capitalize (symbol-name status)))
-                 (and email (format "Account: %s" email))
-                 (and server (format "Server: %s" server))))
-     "   ")))
+           (list status-label
+                 (and email (propertize email 'face 'shadow))
+                 (and server (propertize server 'face 'shadow))))
+     (propertize "  •  " 'face 'shadow))))
 
 (defvar-keymap bitwarden-navigation-mode-map
   :doc "Keymap for `bitwarden-navigation-mode'."
@@ -148,12 +190,15 @@
               (bitwarden-navigation-mode)
               (let ((inhibit-read-only t))
                 (erase-buffer)
+                (setq header-line-format
+                      (list " " (propertize heading 'face 'shadow)))
                 (magit-insert-section (bitwarden-root-section)
                   (insert (propertize "Bitwarden\n"
-                                      'face '(:height 1.4 :weight bold)))
+                                      'face 'bitwarden-title))
                   (magit-insert-section (bitwarden-group-section 'status)
                     (magit-insert-heading heading)
-                    (when message (insert message "\n")))))))))
+                    (when message
+                      (insert (propertize message 'face 'shadow) "\n")))))))))
       (render-status "Loading Bitwarden…")
       (bitwarden-ui--display-buffer buffer)
       (redisplay t)
@@ -350,20 +395,25 @@
     (let ((inhibit-read-only t)
           (point-line (line-number-at-pos)))
       (erase-buffer)
+      (setq header-line-format (list " " (bitwarden-ui--status-label)))
       (magit-insert-section (bitwarden-root-section)
-        (insert (propertize "Bitwarden\n" 'face '(:height 1.4 :weight bold)))
-        (insert (bitwarden-ui--status-label) "\n")
+        (insert (propertize "Bitwarden\n" 'face 'bitwarden-title))
+        (insert (propertize
+                 "RET open  •  TAB fold  •  g refresh  •  s sync\n\n"
+                 'face 'shadow))
         (if (not (bitwarden-session-active-p))
-            (magit-insert-section (bitwarden-group-section 'account)
-              (magit-insert-heading "Account")
-              (bitwarden-navigation--insert-node
-               "Unlock vault" (lambda () (bitwarden-unlock
-                                       #'bitwarden-navigation-refresh)))
-              (bitwarden-navigation--insert-node
-               "Log in" (lambda () (bitwarden-login
-                                 #'bitwarden-navigation-refresh)))
-              (bitwarden-navigation--insert-node
-               "Configure server" #'bitwarden-configure-server))
+            (progn
+              (magit-insert-section (bitwarden-group-section 'account)
+                (magit-insert-heading "Account")
+                (bitwarden-navigation--insert-node
+                 "Unlock vault" (lambda () (bitwarden-unlock
+                                         #'bitwarden-navigation-refresh)))
+                (bitwarden-navigation--insert-node
+                 "Log in" (lambda () (bitwarden-login
+                                   #'bitwarden-navigation-refresh)))
+                (bitwarden-navigation--insert-node
+                 "Configure server" #'bitwarden-configure-server))
+              (insert "\n"))
           (magit-insert-section (bitwarden-group-section 'vault)
             (magit-insert-heading "Vault")
             (bitwarden-navigation--insert-node
@@ -381,6 +431,7 @@
                  (lambda ()
                    (bitwarden-list-open-buffer
                     'items label (list :type type)))))))
+          (insert "\n")
           (magit-insert-section (bitwarden-group-section 'folders)
             (magit-insert-heading "Folders")
             (bitwarden-navigation--insert-node
@@ -398,6 +449,7 @@
                     'items (format "Folder: %s" name)
                     (list :folder-id id)))
                  2))))
+          (insert "\n")
           (magit-insert-section (bitwarden-group-section 'organizations)
             (magit-insert-heading "Organizations and Collections")
             (dolist (organization
@@ -424,6 +476,7 @@
                         'items (format "Collection: %s" collection-name)
                         (list :collection-id collection-id)))
                      2))))))
+          (insert "\n")
           (magit-insert-section (bitwarden-group-section 'lifecycle)
             (magit-insert-heading "Lifecycle")
             (bitwarden-navigation--insert-node
@@ -434,12 +487,14 @@
              "Trash" (lambda ()
                        (bitwarden-list-open-buffer
                         'items "Trash" '(:trash t)))))
+          (insert "\n")
           (magit-insert-section (bitwarden-group-section 'send)
             (magit-insert-heading "Send")
             (bitwarden-navigation--insert-node
              "Owned Sends" (lambda ()
                              (bitwarden-list-open-buffer
                               'sends "Sends" nil))))
+          (insert "\n")
           (magit-insert-section (bitwarden-group-section 'tools)
             (magit-insert-heading "Tools")
             (bitwarden-navigation--insert-node "Generator" #'bitwarden-generate)
@@ -454,7 +509,7 @@
   "Insert navigator LABEL invoking ACTION, indented by INDENT spaces."
   (magit-insert-section (bitwarden-navigation-entry-section action)
     (magit-insert-heading
-      (propertize (concat (make-string (or indent 0) ?\s) label)
+      (propertize (concat (make-string (+ 2 (or indent 0)) ?\s) label)
                   'face 'default))))
 
 (defun bitwarden-navigation-open-at-point ()
@@ -508,17 +563,17 @@
   (setq tabulated-list-format
         (pcase bitwarden-list-kind
           ('items
-           [("Name" 32 t)
+           [("Name" 36 t)
             ("Type" 14 t)
-            ("Folder" 20 t)
-            ("Owner" 18 t)
-            ("Fav" 4 t)
-            ("Updated" 20 t)])
+            ("Folder" 22 t)
+            ("Owner" 20 t)
+            ("★" 3 t)
+            ("Updated" 19 t)])
           ('folders
-           [("Name" 42 t)
+           [("Name" 46 t)
             ("ID" 38 t)])
           ('sends
-           [("Name" 32 t)
+           [("Name" 36 t)
             ("Type" 10 t)
             ("Accesses" 10 t)
             ("Expires" 20 t)
@@ -539,7 +594,8 @@
                   bitwarden-list-records (make-hash-table :test #'equal))
       (bitwarden-ui--configure-list-columns)
       (setq-local header-line-format
-                  (format " %s   Loading…" title)))
+                  (list " " (propertize title 'face 'magit-section-heading)
+                        (propertize "  Loading…" 'face 'shadow))))
     (bitwarden-ui--display-buffer buffer)
     (with-current-buffer buffer (bitwarden-list-refresh))))
 
@@ -594,60 +650,94 @@
   "Install sanitized RECORDS in the current list buffer."
   (clrhash bitwarden-list-records)
   (setq tabulated-list-entries
-          (mapcar
-           (lambda (record)
-             (let ((id (bitwarden-json-get 'id record)))
-               (puthash id record bitwarden-list-records)
-               (pcase bitwarden-list-kind
-                 ('items
+        (mapcar
+         (lambda (record)
+           (let ((id (bitwarden-json-get 'id record)))
+             (puthash id record bitwarden-list-records)
+             (pcase bitwarden-list-kind
+               ('items
+                (let ((type (bitwarden-json-get 'type record)))
                   (list
                    id
                    (vector
-                    (or (bitwarden-json-get 'name record) "")
-                    (bitwarden-ui--item-type-name
-                     (bitwarden-json-get 'type record))
-                    (bitwarden-ui--folder-name
-                     (bitwarden-json-get 'folderId record))
-                    (bitwarden-ui--organization-name
-                     (bitwarden-json-get 'organizationId record))
+                    (propertize (or (bitwarden-json-get 'name record) "")
+                                'face 'bold)
+                    (propertize (bitwarden-ui--item-type-name type)
+                                'face (or (alist-get
+                                           type bitwarden-ui--item-type-faces)
+                                          'default))
+                    (propertize
+                     (bitwarden-ui--folder-name
+                      (bitwarden-json-get 'folderId record))
+                     'face 'shadow)
+                    (propertize
+                     (bitwarden-ui--organization-name
+                      (bitwarden-json-get 'organizationId record))
+                     'face 'shadow)
                     (if (eq (bitwarden-json-get 'favorite record :false) t)
-                        "★" "")
-                    (bitwarden-ui--short-date
-                     (bitwarden-json-get 'revisionDate record)))))
-                 ('folders
-                  (list id
-                        (vector (or (bitwarden-json-get 'name record) "")
-                                (or id ""))))
-                 ('sends
-                  (list
-                   id
-                   (vector
-                    (or (bitwarden-json-get 'name record) "")
-                    (if (= (or (bitwarden-json-get 'type record) 0) 0)
-                        "Text" "File")
-                    (format "%s/%s"
-                            (or (bitwarden-json-get 'accessCount record) 0)
-                            (or (bitwarden-json-get 'maxAccessCount record) "∞"))
-                    (bitwarden-ui--short-date
-                     (bitwarden-json-get 'expirationDate record))
-                    (bitwarden-ui--short-date
-                     (bitwarden-json-get 'deletionDate record))))))))
-           records))
+                        (propertize "★" 'face 'warning) "")
+                    (propertize
+                     (bitwarden-ui--short-date
+                      (bitwarden-json-get 'revisionDate record))
+                     'face 'shadow)))))
+               ('folders
+                (list id
+                      (vector
+                       (propertize (or (bitwarden-json-get 'name record) "")
+                                   'face 'bold)
+                       (propertize (or id "") 'face 'shadow))))
+               ('sends
+                (list
+                 id
+                 (vector
+                  (propertize (or (bitwarden-json-get 'name record) "")
+                              'face 'bold)
+                  (propertize
+                   (if (= (or (bitwarden-json-get 'type record) 0) 0)
+                       "Text" "File")
+                   'face 'font-lock-type-face)
+                  (format "%s/%s"
+                          (or (bitwarden-json-get 'accessCount record) 0)
+                          (or (bitwarden-json-get 'maxAccessCount record) "∞"))
+                  (propertize
+                   (bitwarden-ui--short-date
+                    (bitwarden-json-get 'expirationDate record))
+                   'face 'shadow)
+                  (propertize
+                   (bitwarden-ui--short-date
+                    (bitwarden-json-get 'deletionDate record))
+                   'face 'shadow)))))))
+         records))
   ;; A non-nil REMEMBER-POS lets `tabulated-list-print' restore by entry ID.
   (tabulated-list-print t)
   (setq header-line-format
-        (format " %s   %d entries   / search   g refresh   s sync"
-                bitwarden-list-title (length records))))
+        (delq nil
+              (list
+               " " (propertize bitwarden-list-title
+                                'face 'magit-section-heading)
+               (propertize (format "  %d entries" (length records))
+                           'face 'shadow)
+               (when-let* ((search (plist-get bitwarden-list-filter :search)))
+                 (propertize (format "  /%s/" search)
+                             'face 'font-lock-string-face))
+               (propertize "  •  / search  •  g refresh  •  s sync"
+                           'face 'shadow)))))
 
 (defun bitwarden-list-refresh ()
   "Refresh the current Bitwarden list."
   (interactive)
   (unless (bitwarden-session-active-p)
     (setq tabulated-list-entries nil
-          header-line-format " Bitwarden is locked")
+          header-line-format
+          (list " " (propertize bitwarden-list-title
+                                 'face 'magit-section-heading)
+                (propertize "  Vault is locked" 'face 'warning)))
     (tabulated-list-print t)
     (user-error "Unlock Bitwarden first"))
-  (setq header-line-format (format " %s   Loading…" bitwarden-list-title))
+  (setq header-line-format
+        (list " " (propertize bitwarden-list-title
+                               'face 'magit-section-heading)
+              (propertize "  Loading…" 'face 'shadow)))
   (pcase bitwarden-list-kind
     ('items
      (let ((buffer (current-buffer)))
@@ -972,9 +1062,21 @@
          (start (point))
          (rendered (if (and secret (not revealed))
                        bitwarden-mask-string
-                     (bitwarden-detail--stringify value))))
-    (insert (propertize (format "%-18s " (concat label ":")) 'face 'bold))
-    (insert (if (string-empty-p rendered) "(empty)" rendered) "\n")
+                     (bitwarden-detail--stringify value)))
+         (empty (string-empty-p rendered))
+         (value-face
+          (cond
+           (empty 'shadow)
+           ((and secret revealed) 'bitwarden-revealed-secret)
+           (secret 'bitwarden-secret)
+           ((string-match-p "\\`\\(?:https?\\|ssh\\)://" rendered) 'link)
+           (t 'default))))
+    (insert "  "
+            (propertize (format "%-17s" (concat label ":"))
+                        'face 'bitwarden-field-label)
+            " "
+            (propertize (if empty "—" rendered) 'face value-face)
+            "\n")
     (add-text-properties
      start (point)
      `(bitwarden-field-path ,path
@@ -1018,6 +1120,7 @@
                     "Required" "No"))
   (let ((notes (bitwarden-json-get 'notes item)))
     (when (and notes (not (string-empty-p notes)))
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'notes)
         (magit-insert-heading "Notes")
         (bitwarden-detail--insert-field "Notes" notes nil '(notes))))))
@@ -1025,6 +1128,7 @@
 (defun bitwarden-detail--render-login (item)
   "Render login-specific fields from ITEM."
   (let ((login (bitwarden-json-get 'login item)))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'login)
       (magit-insert-heading "Login")
       (bitwarden-detail--insert-field
@@ -1051,6 +1155,7 @@
 (defun bitwarden-detail--render-card (item)
   "Render card-specific fields from ITEM."
   (let ((card (bitwarden-json-get 'card item)))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'card)
       (magit-insert-heading "Card")
       (dolist (entry '(("Cardholder" cardholderName nil)
@@ -1066,6 +1171,7 @@
 (defun bitwarden-detail--render-identity (item)
   "Render identity-specific fields from ITEM."
   (let ((identity (bitwarden-json-get 'identity item)))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'identity)
       (magit-insert-heading "Identity")
       (dolist
@@ -1095,6 +1201,7 @@
 (defun bitwarden-detail--render-ssh-key (item)
   "Render SSH-key-specific fields from ITEM."
   (let ((ssh-key (bitwarden-json-get 'sshKey item)))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'ssh-key)
       (magit-insert-heading "SSH Key")
       (bitwarden-detail--insert-field
@@ -1111,6 +1218,7 @@
   "Render custom fields from ITEM."
   (let ((fields (append (bitwarden-json-get 'fields item) nil)))
     (when fields
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'custom-fields)
         (magit-insert-heading "Custom Fields")
         (cl-loop for field in fields
@@ -1126,6 +1234,7 @@
   "Render attachment metadata from ITEM."
   (let ((attachments (append (bitwarden-json-get 'attachments item) nil)))
     (when attachments
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'attachments)
         (magit-insert-heading "Attachments")
         (dolist (attachment attachments)
@@ -1145,6 +1254,7 @@
   "Render password history from ITEM."
   (let ((history (append (bitwarden-json-get 'passwordHistory item) nil)))
     (when history
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'password-history)
         (magit-insert-heading "Password History")
         (cl-loop for entry in history
@@ -1157,6 +1267,7 @@
 
 (defun bitwarden-detail--render-unknown (item)
   "Render top-level fields for an unknown ITEM type conservatively."
+  (insert "\n")
   (magit-insert-section (bitwarden-group-section 'unsupported)
     (magit-insert-heading "Unsupported Item Type (read-only)")
     (dolist (entry item)
@@ -1173,6 +1284,7 @@
 (defun bitwarden-detail--render-item ()
   "Render `bitwarden-detail-object' as a vault item."
   (let ((item bitwarden-detail-object))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'summary)
       (magit-insert-heading "Summary")
       (bitwarden-detail--render-common item))
@@ -1186,6 +1298,7 @@
     (bitwarden-detail--render-custom-fields item)
     (bitwarden-detail--render-attachments item)
     (bitwarden-detail--render-history item)
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'metadata)
       (magit-insert-heading "Metadata")
       (dolist (entry '(("Created" creationDate)
@@ -1199,6 +1312,7 @@
 (defun bitwarden-detail--render-send ()
   "Render `bitwarden-detail-object' as a Send."
   (let ((send bitwarden-detail-object))
+    (insert "\n")
     (magit-insert-section (bitwarden-group-section 'summary)
       (magit-insert-heading "Summary")
       (dolist (entry '(("Name" name nil)
@@ -1217,10 +1331,12 @@
        "Type"
        (if (= (or (bitwarden-json-get 'type send) 0) 0) "Text" "File")))
     (when-let* ((text (map-nested-elt send '(text text))))
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'text)
         (magit-insert-heading "Text")
         (bitwarden-detail--insert-field "Content" text t '(text text))))
     (when-let* ((file (bitwarden-json-get 'file send)))
+      (insert "\n")
       (magit-insert-section (bitwarden-group-section 'file)
         (magit-insert-heading "File")
         (bitwarden-detail--insert-field
@@ -1229,20 +1345,26 @@
 
 (defun bitwarden-detail-render ()
   "Render the current detail buffer."
-  (let ((inhibit-read-only t)
-        (line (line-number-at-pos)))
+  (let* ((inhibit-read-only t)
+         (line (line-number-at-pos))
+         (name (or (bitwarden-json-get 'name bitwarden-detail-object)
+                   "Bitwarden Object")))
     (erase-buffer)
+    (setq header-line-format
+          (list " " (propertize name 'face 'magit-section-heading)
+                (propertize "  •  TAB fold  •  v reveal  •  e edit"
+                            'face 'shadow)))
     (magit-insert-section (bitwarden-root-section)
       (insert (propertize
-               (format "%s\n"
-                       (or (bitwarden-json-get 'name bitwarden-detail-object)
-                           "Bitwarden Object"))
-               'face '(:height 1.35 :weight bold)))
-      (insert "v reveal/hide   y copy   i insert   e edit   g refresh   q quit\n")
+               (concat name "\n") 'face 'bitwarden-title))
+      (insert (propertize
+               "v reveal/hide  •  y copy  •  i insert  •  e edit  •  g refresh\n"
+               'face 'shadow))
       (pcase bitwarden-detail-kind
         ('item (bitwarden-detail--render-item))
         ('send (bitwarden-detail--render-send))
         ('generated
+         (insert "\n")
          (magit-insert-section (bitwarden-group-section 'generated)
            (magit-insert-heading "Generated Value")
            (bitwarden-detail--insert-field
@@ -1656,7 +1778,7 @@
   (let ((widget
          (widget-create
           (if multiline 'text 'editable-field)
-          :tag label
+          :tag (propertize label 'face 'bitwarden-field-label)
           :format "%{%t%}: %v"
           :value (or value "")
           :size size
@@ -1667,7 +1789,8 @@
 
 (defun bitwarden-form--checkbox (key label value)
   "Create a checkbox under KEY with LABEL and VALUE."
-  (insert (format "%-20s " (concat label ":")))
+  (insert (propertize (format "%-20s " (concat label ":"))
+                      'face 'bitwarden-field-label))
   (let ((widget (widget-create 'checkbox :value (eq value t))))
     (bitwarden-form--remember key widget)
     (insert "\n")
@@ -1678,14 +1801,17 @@
   (let ((widget
          (apply #'widget-create
                 'menu-choice
-                (append (list :tag label :value value) choices))))
+                (append (list :tag (propertize label
+                                              'face 'bitwarden-field-label)
+                              :value value)
+                        choices))))
     (bitwarden-form--remember key widget)
     (insert "\n")
     widget))
 
 (defun bitwarden-form--section (title)
   "Insert form section TITLE."
-  (insert "\n" (propertize title 'face '(:weight bold :underline t)) "\n"))
+  (insert "\n" (propertize title 'face 'magit-section-heading) "\n"))
 
 (defun bitwarden-form--const-choices (entries &optional none-label)
   "Convert ENTRIES of (VALUE . LABEL) into widget choices."
@@ -1903,7 +2029,8 @@
           (bitwarden-form--field
            'sshKey.keyFingerprint "Fingerprint"
            (bitwarden-json-get 'keyFingerprint ssh-key) nil nil 55))
-      (insert "Key material is immutable after creation.\n")
+      (insert (propertize "Key material is immutable after creation.\n"
+                          'face 'shadow))
       (insert (format "Fingerprint: %s\n"
                       (or (bitwarden-json-get 'keyFingerprint ssh-key) "")))
       (insert (format "Public key: %s\n"
@@ -1933,10 +2060,10 @@ SOURCE is refreshed after a successful save."
     (insert (propertize
              (format "%s %s\n"
                      (if bitwarden-form-new-p "New" "Edit")
-                     (bitwarden-ui--item-type-name
-                      (bitwarden-json-get 'type item)))
-             'face '(:height 1.3 :weight bold)))
-    (insert "C-c C-c save   C-c C-k cancel\n")
+                      (bitwarden-ui--item-type-name
+                       (bitwarden-json-get 'type item)))
+             'face 'bitwarden-title))
+    (insert (propertize "C-c C-c save  •  C-c C-k cancel\n" 'face 'shadow))
     (bitwarden-form--render-common-item item)
     (pcase (bitwarden-json-get 'type item)
       (1 (bitwarden-form--render-login item))
@@ -1949,8 +2076,8 @@ SOURCE is refreshed after a successful save."
   "Render the current folder form."
   (insert (propertize
            (if bitwarden-form-new-p "New Folder\n" "Edit Folder\n")
-           'face '(:height 1.3 :weight bold)))
-  (insert "C-c C-c save   C-c C-k cancel\n\n")
+           'face 'bitwarden-title))
+  (insert (propertize "C-c C-c save  •  C-c C-k cancel\n\n" 'face 'shadow))
   (bitwarden-form--field
    'name "Name" (bitwarden-json-get 'name bitwarden-form-original) nil nil 55))
 
@@ -1962,8 +2089,8 @@ SOURCE is refreshed after a successful save."
              (format "%s %s Send\n"
                      (if bitwarden-form-new-p "New" "Edit")
                      (if (= type 0) "Text" "File"))
-             'face '(:height 1.3 :weight bold)))
-    (insert "C-c C-c save   C-c C-k cancel\n")
+             'face 'bitwarden-title))
+    (insert (propertize "C-c C-c save  •  C-c C-k cancel\n" 'face 'shadow))
     (bitwarden-form--section "Send")
     (bitwarden-form--field 'name "Name" (bitwarden-json-get 'name send) nil nil 55)
     (bitwarden-form--field 'notes "Private notes" (bitwarden-json-get 'notes send) nil t)
@@ -1998,10 +2125,18 @@ SOURCE is refreshed after a successful save."
 
 (defun bitwarden-form-render ()
   "Render widgets in the current form buffer."
-  (let ((inhibit-read-only t))
+  (let* ((inhibit-read-only t)
+         (name (or (bitwarden-json-get 'name bitwarden-form-original)
+                   (capitalize (symbol-name bitwarden-form-kind))))
+         (action (if bitwarden-form-new-p "New" "Edit")))
     (erase-buffer)
     (remove-overlays)
     (setq bitwarden-form-widgets nil)
+    (setq header-line-format
+          (list " " (propertize (format "%s %s" action name)
+                                 'face 'magit-section-heading)
+                (propertize "  •  C-c C-c save  •  C-c C-k cancel"
+                            'face 'shadow)))
     (pcase bitwarden-form-kind
       ('item (bitwarden-form--render-item))
       ('folder (bitwarden-form--render-folder))
