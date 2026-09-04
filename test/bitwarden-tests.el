@@ -35,7 +35,7 @@
   (dolist (job bitwarden--queue)
     (bitwarden--destroy-job-buffers job))
   (setq bitwarden--queue nil)
-  (when (timerp bitwarden--idle-timer)
+  (when bitwarden--idle-timer
     (cancel-timer bitwarden--idle-timer))
   (setq bitwarden--idle-timer nil)
   (bitwarden--clear-sensitive-state 'unknown)
@@ -43,7 +43,6 @@
   (dolist (buffer (buffer-list))
     (when (and (not (memq buffer existing-buffers))
                (string-prefix-p "*Bitwarden" (buffer-name buffer)))
-      (with-current-buffer buffer (set-buffer-modified-p nil))
       (kill-buffer buffer))))
 
 (defmacro bitwarden-test--with-fake (&rest body)
@@ -112,6 +111,7 @@
             (should (eq buffer (get-buffer bitwarden-ui--navigator-buffer)))
             (with-current-buffer buffer
               (should (string-match-p "Vault" (buffer-string)))
+              (should-not (string-match-p "RET open" (buffer-string)))
               (should-not (string-match-p "Loading Bitwarden"
                                           (buffer-string))))))))))
 
@@ -268,6 +268,9 @@
                                (password . "visible-only-on-demand")
                                (uris . [])))) t))
       (bitwarden-detail-render)
+      (should (eq (keymap-lookup bitwarden-detail-mode-map "?")
+                  'bitwarden-detail-dispatch))
+      (should-not (string-match-p "reveal/hide" (buffer-string)))
       (should (object-of-class-p magit-root-section 'bitwarden-root-section))
       (should (seq-some
                (lambda (section)
@@ -312,6 +315,9 @@
                                  (value . "username"))])
                      (futureField . ((enabled . t)))) t))
       (bitwarden-form-render)
+      (should (eq (keymap-lookup bitwarden-form-mode-map "?")
+                  'bitwarden-form-dispatch))
+      (should-not (string-match-p "C-c C-c save" (buffer-string)))
       (let ((payload (bitwarden-form--collect-item)))
         (should (equal (map-nested-elt payload '(futureField enabled)) t))
         (should (= (length (bitwarden-json-get 'fields payload)) 1))
@@ -433,6 +439,7 @@
               '((id . "item-1") (type . 1) (name . "Example")
                 (folderId . "folder-1") (favorite . t)
                 (login . ((password . "must-not-render")))))))
+      (should (string-match-p "Name" (format-mode-line header-line-format)))
       (should (string-match-p "Example" (buffer-string)))
       (goto-char (point-min))
       (search-forward "Example")
@@ -450,6 +457,8 @@
       (let ((navigator (get-buffer bitwarden-ui--navigator-buffer)))
         (should (buffer-live-p navigator))
         (with-current-buffer navigator
+          (should (eq (keymap-lookup bitwarden-navigation-mode-map "?")
+                      'bitwarden-navigation-dispatch))
           (should (object-of-class-p magit-root-section
                                      'bitwarden-root-section))
           (should (seq-some
@@ -474,6 +483,10 @@
       (let ((list-buffer (get-buffer "*Bitwarden Async Test*")))
         (should (buffer-live-p list-buffer))
         (with-current-buffer list-buffer
+          (should (eq (keymap-lookup bitwarden-list-mode-map "?")
+                      'bitwarden-list-dispatch))
+          (should (equal (aref tabulated-list-format 0)
+                         '("Name" 36 t)))
           (should (string-match-p "Example Login" (buffer-string)))
           (should-not (string-match-p "correct horse" (buffer-string)))
           (goto-char (point-min))
@@ -528,6 +541,20 @@
                  (lambda (&rest _args) (setq requested t))))
         (bitwarden--idle-check))
       (should requested))))
+
+(ert-deftest bitwarden-test-lock-restores-sensitive-windows ()
+  (bitwarden-test--with-fake
+    (save-window-excursion
+      (delete-other-windows)
+      (let* ((sensitive (generate-new-buffer "*Bitwarden Test Sensitive*"))
+             (bitwarden--sensitive-buffers (list sensitive)))
+        (display-buffer
+         sensitive
+         '((display-buffer-below-selected) (window-height . 0.5)))
+        (should (= (length (window-list nil 'no-minibuffer)) 2))
+        (bitwarden--clear-sensitive-state 'locked)
+        (should-not (buffer-live-p sensitive))
+        (should (= (length (window-list nil 'no-minibuffer)) 1))))))
 
 (provide 'bitwarden-tests)
 

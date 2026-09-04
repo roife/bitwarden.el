@@ -1,7 +1,7 @@
 ;;; bitwarden.el --- Full Bitwarden CLI client for Emacs -*- lexical-binding: t; -*-
 
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "31.1") (magit-section "4.7.1"))
+;; Package-Requires: ((emacs "31.1") (magit-section "4.7.1") (transient "0.13.0"))
 ;; Keywords: tools, password, bitwarden
 ;; URL: https://github.com/roife/bitwarden.el
 ;;; Commentary:

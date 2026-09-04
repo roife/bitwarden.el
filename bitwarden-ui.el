@@ -1,7 +1,7 @@
 ;;; bitwarden-ui.el --- Buffer UI for Bitwarden -*- lexical-binding: t; -*-
 
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "31.1") (magit-section "4.7.1"))
+;; Package-Requires: ((emacs "31.1") (magit-section "4.7.1") (transient "0.13.0"))
 
 ;;; Commentary:
 
@@ -14,6 +14,7 @@
 (require 'magit-section)
 (require 'seq)
 (require 'tabulated-list)
+(require 'transient)
 (require 'wid-edit)
 (require 'browse-url)
 (require 'url-parse)
@@ -140,7 +141,23 @@
   "u" #'bitwarden-unlock
   "l" #'bitwarden-lock
   "L" #'bitwarden-logout
+  "?" #'bitwarden-navigation-dispatch
   "q" #'quit-window)
+
+(transient-define-prefix bitwarden-navigation-dispatch ()
+  "Show commands for the Bitwarden navigator."
+  [["Navigate"
+    ("RET" "Open at point" bitwarden-navigation-open-at-point)
+    ("TAB" "Toggle section" magit-section-toggle)]
+   ["Vault"
+    ("g" "Refresh" bitwarden-navigation-refresh)
+    ("s" "Synchronize" bitwarden-sync)]
+   ["Session"
+    ("u" "Unlock" bitwarden-unlock)
+    ("l" "Lock" bitwarden-lock)
+    ("L" "Log out" bitwarden-logout)]
+   ["Buffer"
+    ("q" "Quit" quit-window)]])
 
 (defvar-keymap bitwarden-navigation-entry-section-map
   :doc "Keymap for actionable Bitwarden navigation sections."
@@ -168,7 +185,29 @@
   "y" #'bitwarden-list-copy
   "C" #'bitwarden-list-clone
   "M" #'bitwarden-list-move
+  "?" #'bitwarden-list-dispatch
   "q" #'quit-window)
+
+(transient-define-prefix bitwarden-list-dispatch ()
+  "Show commands for a Bitwarden list."
+  [["Navigate"
+    ("RET" "Open" bitwarden-list-open)
+    ("/" "Search" bitwarden-list-search)]
+   ["Update"
+    ("g" "Refresh" bitwarden-list-refresh)
+    ("s" "Synchronize" bitwarden-list-sync)]
+   ["Item"
+    ("c" "Create" bitwarden-list-create)
+    ("e" "Edit" bitwarden-list-edit)
+    ("y" "Copy field" bitwarden-list-copy)
+    ("C" "Clone" bitwarden-list-clone)
+    ("M" "Move" bitwarden-list-move)]
+   ["Lifecycle"
+    ("a" "Archive" bitwarden-list-archive)
+    ("r" "Restore" bitwarden-list-restore)
+    ("d" "Delete" bitwarden-list-delete)
+    ("D" "Delete permanently" bitwarden-list-delete-permanently)
+    ("q" "Quit" quit-window)]])
 
 (define-derived-mode bitwarden-list-mode tabulated-list-mode "Bitwarden-List"
   "Major mode for Bitwarden item, folder, and Send lists."
@@ -398,9 +437,7 @@
       (setq header-line-format (list " " (bitwarden-ui--status-label)))
       (magit-insert-section (bitwarden-root-section)
         (insert (propertize "Bitwarden\n" 'face 'bitwarden-title))
-        (insert (propertize
-                 "RET open  •  TAB fold  •  g refresh  •  s sync\n\n"
-                 'face 'shadow))
+        (insert "\n")
         (if (not (bitwarden-session-active-p))
             (progn
               (magit-insert-section (bitwarden-group-section 'account)
@@ -591,11 +628,11 @@
       (setq-local bitwarden-list-kind kind
                   bitwarden-list-title title
                   bitwarden-list-filter (copy-sequence filter)
-                  bitwarden-list-records (make-hash-table :test #'equal))
-      (bitwarden-ui--configure-list-columns)
-      (setq-local header-line-format
-                  (list " " (propertize title 'face 'magit-section-heading)
-                        (propertize "  Loading…" 'face 'shadow))))
+                  bitwarden-list-records (make-hash-table :test #'equal)
+                  mode-line-process
+                  (list "  " title
+                        (propertize "  Loading…" 'face 'shadow)))
+      (bitwarden-ui--configure-list-columns))
     (bitwarden-ui--display-buffer buffer)
     (with-current-buffer buffer (bitwarden-list-refresh))))
 
@@ -710,33 +747,26 @@
          records))
   ;; A non-nil REMEMBER-POS lets `tabulated-list-print' restore by entry ID.
   (tabulated-list-print t)
-  (setq header-line-format
-        (delq nil
-              (list
-               " " (propertize bitwarden-list-title
-                                'face 'magit-section-heading)
-               (propertize (format "  %d entries" (length records))
-                           'face 'shadow)
-               (when-let* ((search (plist-get bitwarden-list-filter :search)))
-                 (propertize (format "  /%s/" search)
-                             'face 'font-lock-string-face))
-               (propertize "  •  / search  •  g refresh  •  s sync"
-                           'face 'shadow)))))
+  (setq mode-line-process
+        (list
+         "  " bitwarden-list-title
+         (propertize (format "  %d entries" (length records)) 'face 'shadow)
+         (when-let* ((search (plist-get bitwarden-list-filter :search)))
+           (propertize (format "  /%s/" search)
+                       'face 'font-lock-string-face)))))
 
 (defun bitwarden-list-refresh ()
   "Refresh the current Bitwarden list."
   (interactive)
   (unless (bitwarden-session-active-p)
     (setq tabulated-list-entries nil
-          header-line-format
-          (list " " (propertize bitwarden-list-title
-                                 'face 'magit-section-heading)
+          mode-line-process
+          (list "  " bitwarden-list-title
                 (propertize "  Vault is locked" 'face 'warning)))
     (tabulated-list-print t)
     (user-error "Unlock Bitwarden first"))
-  (setq header-line-format
-        (list " " (propertize bitwarden-list-title
-                               'face 'magit-section-heading)
+  (setq mode-line-process
+        (list "  " bitwarden-list-title
               (propertize "  Loading…" 'face 'shadow)))
   (pcase bitwarden-list-kind
     ('items
@@ -978,7 +1008,33 @@
   "x" #'bitwarden-detail-delete-attachment
   "g" #'bitwarden-detail-refresh
   "s" #'bitwarden-sync
+  "?" #'bitwarden-detail-dispatch
   "q" #'quit-window)
+
+(transient-define-prefix bitwarden-detail-dispatch ()
+  "Show commands for a Bitwarden detail buffer."
+  [["Inspect"
+    ("TAB" "Toggle section" magit-section-toggle)
+    ("v" "Reveal or hide" bitwarden-detail-toggle-secret)
+    ("y" "Copy field" bitwarden-detail-copy)
+    ("i" "Insert field" bitwarden-detail-insert)
+    ("o" "Open URI" bitwarden-detail-open-uri)
+    ("t" "Show TOTP" bitwarden-detail-show-totp)]
+   ["Item"
+    ("e" "Edit" bitwarden-detail-edit)
+    ("C" "Clone" bitwarden-detail-clone)
+    ("M" "Move" bitwarden-detail-move)
+    ("a" "Archive" bitwarden-detail-archive)
+    ("r" "Restore" bitwarden-detail-restore)
+    ("d" "Delete" bitwarden-detail-delete)]
+   ["Attachments"
+    ("A" "Add" bitwarden-detail-add-attachment)
+    ("w" "Download" bitwarden-detail-download-attachment)
+    ("x" "Delete" bitwarden-detail-delete-attachment)]
+   ["Update"
+    ("g" "Refresh" bitwarden-detail-refresh)
+    ("s" "Synchronize" bitwarden-sync)
+    ("q" "Quit" quit-window)]])
 
 (define-derived-mode bitwarden-detail-mode magit-section-mode "Bitwarden-Detail"
   "Major mode for a decrypted Bitwarden object."
@@ -991,7 +1047,7 @@
 
 (defun bitwarden-detail--cleanup ()
   "Release state owned by the current detail buffer."
-  (when (timerp bitwarden-detail-totp-timer)
+  (when bitwarden-detail-totp-timer
     (cancel-timer bitwarden-detail-totp-timer))
   (setq bitwarden-detail-totp-timer nil)
   (setq bitwarden-detail-object nil
@@ -1351,15 +1407,10 @@
                    "Bitwarden Object")))
     (erase-buffer)
     (setq header-line-format
-          (list " " (propertize name 'face 'magit-section-heading)
-                (propertize "  •  TAB fold  •  v reveal  •  e edit"
-                            'face 'shadow)))
+          (list " " (propertize name 'face 'magit-section-heading)))
     (magit-insert-section (bitwarden-root-section)
       (insert (propertize
                (concat name "\n") 'face 'bitwarden-title))
-      (insert (propertize
-               "v reveal/hide  •  y copy  •  i insert  •  e edit  •  g refresh\n"
-               'face 'shadow))
       (pcase bitwarden-detail-kind
         ('item (bitwarden-detail--render-item))
         ('send (bitwarden-detail--render-send))
@@ -1483,7 +1534,7 @@
      (lambda (value)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
-           (when (timerp bitwarden-detail-totp-timer)
+           (when bitwarden-detail-totp-timer
              (cancel-timer bitwarden-detail-totp-timer))
            (setq bitwarden-detail-totp value
                  bitwarden-detail-totp-timer
@@ -1737,7 +1788,15 @@
   :doc "Keymap for `bitwarden-form-mode'."
   :parent widget-keymap
   "C-c C-c" #'bitwarden-form-save
-  "C-c C-k" #'bitwarden-form-cancel)
+  "C-c C-k" #'bitwarden-form-cancel
+  "C-c ?" #'bitwarden-form-dispatch
+  "?" #'bitwarden-form-dispatch)
+
+(transient-define-prefix bitwarden-form-dispatch ()
+  "Show commands for a Bitwarden form."
+  [["Form"
+    ("s" "Save" bitwarden-form-save)
+    ("k" "Cancel" bitwarden-form-cancel)]])
 
 (define-derived-mode bitwarden-form-mode special-mode "Bitwarden-Form"
   "Major mode for editing Bitwarden objects with widgets."
@@ -2063,7 +2122,6 @@ SOURCE is refreshed after a successful save."
                       (bitwarden-ui--item-type-name
                        (bitwarden-json-get 'type item)))
              'face 'bitwarden-title))
-    (insert (propertize "C-c C-c save  •  C-c C-k cancel\n" 'face 'shadow))
     (bitwarden-form--render-common-item item)
     (pcase (bitwarden-json-get 'type item)
       (1 (bitwarden-form--render-login item))
@@ -2077,7 +2135,7 @@ SOURCE is refreshed after a successful save."
   (insert (propertize
            (if bitwarden-form-new-p "New Folder\n" "Edit Folder\n")
            'face 'bitwarden-title))
-  (insert (propertize "C-c C-c save  •  C-c C-k cancel\n\n" 'face 'shadow))
+  (insert "\n")
   (bitwarden-form--field
    'name "Name" (bitwarden-json-get 'name bitwarden-form-original) nil nil 55))
 
@@ -2090,7 +2148,6 @@ SOURCE is refreshed after a successful save."
                      (if bitwarden-form-new-p "New" "Edit")
                      (if (= type 0) "Text" "File"))
              'face 'bitwarden-title))
-    (insert (propertize "C-c C-c save  •  C-c C-k cancel\n" 'face 'shadow))
     (bitwarden-form--section "Send")
     (bitwarden-form--field 'name "Name" (bitwarden-json-get 'name send) nil nil 55)
     (bitwarden-form--field 'notes "Private notes" (bitwarden-json-get 'notes send) nil t)
@@ -2134,9 +2191,7 @@ SOURCE is refreshed after a successful save."
     (setq bitwarden-form-widgets nil)
     (setq header-line-format
           (list " " (propertize (format "%s %s" action name)
-                                 'face 'magit-section-heading)
-                (propertize "  •  C-c C-c save  •  C-c C-k cancel"
-                            'face 'shadow)))
+                                 'face 'magit-section-heading)))
     (pcase bitwarden-form-kind
       ('item (bitwarden-form--render-item))
       ('folder (bitwarden-form--render-folder))
@@ -2362,7 +2417,6 @@ SOURCE is refreshed after a successful save."
 (defun bitwarden-form--saved (message-text)
   "Close the current form and show MESSAGE-TEXT."
   (let ((source bitwarden-form-source-buffer))
-    (set-buffer-modified-p nil)
     (kill-buffer (current-buffer))
     (message "%s" message-text)
     (when (buffer-live-p source)
@@ -2419,7 +2473,6 @@ SOURCE is refreshed after a successful save."
       ("Reload"
        (let ((buffer (current-buffer))
              (source bitwarden-form-source-buffer))
-         (set-buffer-modified-p nil)
          (kill-buffer buffer)
          (bitwarden-form--open 'item current nil source)))
       ("Force Save" (bitwarden-form--save-item-now payload))
@@ -2510,7 +2563,6 @@ SOURCE is refreshed after a successful save."
                           nil t nil nil "Reload")
                     ("Reload"
                      (let ((source bitwarden-form-source-buffer))
-                       (set-buffer-modified-p nil)
                        (kill-buffer buffer)
                        (bitwarden-form--open 'send current nil source)))
                     ("Force Save" (bitwarden-form--save-send-now payload))
@@ -2553,7 +2605,6 @@ SOURCE is refreshed after a successful save."
   (interactive)
   (when (or (not (buffer-modified-p))
             (yes-or-no-p "Discard this Bitwarden form? "))
-    (set-buffer-modified-p nil)
     (kill-buffer (current-buffer))))
 
 (defun bitwarden-create-item ()
@@ -2906,7 +2957,9 @@ result buffer."
              (not (bitwarden-session-active-p)))
         (clrhash bitwarden-list-records)
         (setq tabulated-list-entries nil
-              header-line-format " Bitwarden is locked")
+              mode-line-process
+              (list "  " bitwarden-list-title
+                    (propertize "  Vault is locked" 'face 'warning)))
         (tabulated-list-print t))))))
 
 (add-hook 'bitwarden-after-state-change-hook

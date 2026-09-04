@@ -169,7 +169,7 @@ rules.  Otherwise this value is passed to `display-buffer'."
   (when (and (bitwarden-session-active-p)
              bitwarden-idle-lock-seconds
              (> bitwarden-idle-lock-seconds 0)
-             (not (timerp bitwarden--idle-timer)))
+             (null bitwarden--idle-timer))
     (setq bitwarden--idle-timer
           (run-at-time 60 60 #'bitwarden--idle-check))))
 
@@ -187,23 +187,20 @@ rules.  Otherwise this value is passed to `display-buffer'."
                    (message "Bitwarden locked after inactivity"))
      :on-error #'ignore)))
 
-(defun bitwarden--clear-sensitive-state (&optional status)
-  "Clear session data and sensitive buffers, setting STATUS when given."
-  (when (timerp bitwarden--idle-timer)
+(defun bitwarden--clear-sensitive-state (status)
+  "Clear session data and sensitive buffers, setting STATUS."
+  (when bitwarden--idle-timer
     (cancel-timer bitwarden--idle-timer))
   (setq bitwarden--idle-timer nil
-        bitwarden--last-activity nil)
-  (setq bitwarden--session nil)
+        bitwarden--last-activity nil
+        bitwarden--session nil
+        bitwarden--status status)
   (clrhash bitwarden--metadata-cache)
   (let ((buffers bitwarden--sensitive-buffers))
     (setq bitwarden--sensitive-buffers nil)
     (dolist (buffer buffers)
       (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (set-buffer-modified-p nil))
-        (kill-buffer buffer))))
-  (when status
-    (setq bitwarden--status status))
+        (quit-windows-on buffer t))))
   (run-hooks 'bitwarden-after-state-change-hook))
 
 (defun bitwarden--classify-error (exit-code stdout stderr argv)
@@ -261,16 +258,14 @@ rules.  Otherwise this value is passed to `display-buffer'."
   (dolist (buffer (list (bitwarden-job-stdout-buffer job)
                         (bitwarden-job-stderr-buffer job)))
     (when (buffer-live-p buffer)
-      (with-current-buffer buffer
-        (set-buffer-modified-p nil))
       (kill-buffer buffer)))
   (setf (bitwarden-job-stdout-buffer job) nil
         (bitwarden-job-stderr-buffer job) nil))
 
 (defun bitwarden--cancel-prompt-timer (job)
   "Cancel JOB's prompt polling timer."
-  (when (timerp (bitwarden-job-prompt-timer job))
-    (cancel-timer (bitwarden-job-prompt-timer job)))
+  (when-let* ((timer (bitwarden-job-prompt-timer job)))
+    (cancel-timer timer))
   (setf (bitwarden-job-prompt-timer job) nil))
 
 (defun bitwarden--maybe-answer-prompt (process)

@@ -10,6 +10,7 @@ import, and export without launching a shell.
 - Emacs 31.1
 - Bitwarden CLI (`bw`) on `exec-path`
 - `magit-section` 4.7.1
+- `transient` 0.13
 - A Bitwarden or compatible self-hosted server
 
 `magit-section` is also installed as a dependency of Magit.
@@ -47,6 +48,9 @@ The package respects normal `display-buffer` rules.  Navigator, list, detail,
 and form buffers are independent; it does not install a fixed window layout.
 Navigator and detail buffers use `magit-section`, so `TAB` folds the current
 section and Magit's normal section movement/cycling commands are available.
+Press `?` in any Bitwarden buffer to open its context-sensitive `transient`
+command menu; key reminders are kept out of the buffer contents.  In an active
+form field, use `C-c ?` so that a literal `?` remains editable.
 
 Navigator:
 
@@ -108,7 +112,8 @@ read-only afterward.
   automatically.  Set it to `system-clipboard` if this is undesirable.
 - The vault locks after 15 minutes without activity in a Bitwarden buffer.
   Auto-lock discards unsaved Bitwarden forms.  Lock and logout also clear all
-  package caches and sensitive buffers.
+  package caches and sensitive buffers, restoring the windows that displayed
+  those buffers instead of leaving duplicate panes behind.
 - Export and attachment files are set to mode `0600`.  Plain JSON, CSV, and ZIP
   exports require an explicit warning confirmation.
 
