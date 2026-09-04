@@ -1,0 +1,211 @@
+#!/bin/sh
+
+# Stateful-enough fake Bitwarden CLI for ERT.  It never touches a real vault.
+
+log_line() {
+  if [ -n "${FAKE_BW_LOG:-}" ]; then
+    printf '%s\n' "$*" >> "$FAKE_BW_LOG"
+  fi
+}
+
+if [ "${1:-}" = "--nointeraction" ]; then
+  shift
+fi
+
+command_name=${1:-}
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+log_line "command:$command_name args:$* session:${BW_SESSION:+set}"
+
+case "$command_name" in
+  status)
+    if [ -n "${FAKE_BW_STATUS_JSON:-}" ]; then
+      printf '%s\n' "$FAKE_BW_STATUS_JSON"
+    else
+      printf '%s\n' '{"serverUrl":"https://example.test","lastSync":"2026-09-04T00:00:00.000Z","userEmail":"tester@example.test","userId":"user-1","status":"locked"}'
+    fi
+    ;;
+  unlock)
+    if [ "${BITWARDEN_EL_MASTER_PASSWORD:-}" = "bad" ]; then
+      printf '%s\n' "Invalid master password" >&2
+      exit 1
+    fi
+    log_line "unlock-password:${BITWARDEN_EL_MASTER_PASSWORD:+set}"
+    printf '%s\n' "fake-session-key"
+    ;;
+  login)
+    if [ "${1:-}" = "--apikey" ]; then
+      log_line "api-id:${BW_CLIENTID:+set} api-secret:${BW_CLIENTSECRET:+set}"
+      printf '%s\n' "You are logged in!"
+    else
+      log_line "login-password:${BITWARDEN_EL_PASSWORD:+set}"
+      if [ -n "${FAKE_BW_TWO_PROMPTS:-}" ]; then
+        printf '%s' "Two-step login code:" >&2
+        stty -echo 2>/dev/null || true
+        IFS= read -r two_step_code
+        stty echo 2>/dev/null || true
+        printf '\n' >&2
+        log_line "two-step:${two_step_code:+set}"
+        printf '%s' "New device verification required. Enter OTP sent to login email:" >&2
+        stty -echo 2>/dev/null || true
+        IFS= read -r device_code
+        stty echo 2>/dev/null || true
+        printf '\n' >&2
+        log_line "new-device:${device_code:+set}"
+      fi
+      printf '%s\n' "fake-session-key"
+    fi
+    ;;
+  lock)
+    printf '%s\n' "Your vault is locked."
+    ;;
+  logout)
+    printf '%s\n' "You have logged out."
+    ;;
+  sync)
+    printf '%s\n' "Syncing complete."
+    ;;
+  slow)
+    sleep "${1:-0.1}"
+    printf '%s\n' "slow-done"
+    ;;
+  fail-locked)
+    printf '%s\n' "Vault is locked." >&2
+    exit 1
+    ;;
+  list)
+    case "${1:-}" in
+      items)
+        printf '%s\n' '[{"id":"item-1","type":1,"name":"Example Login","folderId":"folder-1","organizationId":null,"collectionIds":[],"favorite":true,"reprompt":0,"revisionDate":"2026-09-04T00:00:00.000Z","login":{"username":"alice","password":"correct horse battery staple","totp":"otpauth://totp/Test?secret=AAAA","uris":[{"match":0,"uri":"https://example.test"}]},"notes":"fixture note","fields":[{"name":"PIN","value":"1234","type":1}],"unknownTopLevel":{"keep":true}}]'
+        ;;
+      folders)
+        printf '%s\n' '[{"id":"folder-1","name":"Work"}]'
+        ;;
+      organizations)
+        printf '%s\n' '[{"id":"org-1","name":"Example Org"}]'
+        ;;
+      collections|org-collections)
+        printf '%s\n' '[{"id":"collection-1","name":"Shared","organizationId":"org-1"}]'
+        ;;
+      *) printf '%s\n' '[]' ;;
+    esac
+    ;;
+  get)
+    object=${1:-}
+    identifier=${2:-}
+    case "$object:$identifier" in
+      template:item)
+        printf '%s\n' '{"type":1,"name":"Item name","notes":null,"favorite":false,"fields":[],"reprompt":0,"passwordHistory":[]}'
+        ;;
+      template:item.login)
+        printf '%s\n' '{"username":null,"password":null,"totp":null,"uris":[]}'
+        ;;
+      template:item.securenote)
+        printf '%s\n' '{"type":0}'
+        ;;
+      template:item.card)
+        printf '%s\n' '{"cardholderName":null,"brand":null,"number":null,"expMonth":null,"expYear":null,"code":null}'
+        ;;
+      template:item.identity)
+        printf '%s\n' '{"title":null,"firstName":null,"middleName":null,"lastName":null,"address1":null,"address2":null,"address3":null,"city":null,"state":null,"postalCode":null,"country":null,"company":null,"email":null,"phone":null,"ssn":null,"username":null,"passportNumber":null,"licenseNumber":null}'
+        ;;
+      template:folder)
+        printf '%s\n' '{"name":"Folder name"}'
+        ;;
+      item:*)
+        printf '%s\n' '{"id":"item-1","type":1,"name":"Example Login","folderId":"folder-1","organizationId":null,"collectionIds":[],"favorite":true,"reprompt":0,"creationDate":"2026-09-01T00:00:00.000Z","revisionDate":"2026-09-04T00:00:00.000Z","login":{"username":"alice","password":"correct horse battery staple","totp":"otpauth://totp/Test?secret=AAAA","uris":[{"match":0,"uri":"https://example.test"}]},"notes":"fixture note","fields":[{"name":"PIN","value":"1234","type":1}],"attachments":[{"id":"attachment-1","fileName":"fixture.txt","size":"7"}],"unknownTopLevel":{"keep":true}}'
+        ;;
+      totp:*) printf '%s\n' '123456' ;;
+      folder:*) printf '%s\n' '{"id":"folder-1","name":"Work"}' ;;
+      *) printf '%s\n' '{}' ;;
+    esac
+    ;;
+  create|edit|move)
+    payload=$(cat)
+    if [ -n "${FAKE_BW_CAPTURE_STDIN:-}" ]; then
+      log_line "stdin:$payload"
+    fi
+    printf '%s\n' '{"id":"saved-1","name":"Saved"}'
+    ;;
+  delete)
+    printf '%s\n' "Object deleted."
+    ;;
+  archive|restore)
+    printf '%s\n' '{"id":"item-1","name":"Example Login"}'
+    ;;
+  send)
+    subcommand=${1:-}
+    shift
+    case "$subcommand" in
+      list)
+        printf '%s\n' '[{"id":"send-1","name":"Example Send","type":0,"accessCount":1,"maxAccessCount":3,"revisionDate":"2026-09-04T00:00:00.000Z","expirationDate":null,"deletionDate":"2026-09-11T00:00:00.000Z"}]'
+        ;;
+      get)
+        printf '%s\n' '{"id":"send-1","name":"Example Send","type":0,"accessCount":1,"maxAccessCount":3,"revisionDate":"2026-09-04T00:00:00.000Z","deletionDate":"2026-09-11T00:00:00.000Z","text":{"text":"send secret","hidden":true}}'
+        ;;
+      template)
+        if [ "${1:-}" = "send.file" ]; then
+          printf '%s\n' '{"type":1,"name":"File Send","notes":null,"file":{"fileName":null},"deletionDate":null}'
+        else
+          printf '%s\n' '{"type":0,"name":"Text Send","notes":null,"text":{"text":"","hidden":false},"deletionDate":null}'
+        fi
+        ;;
+      create|edit)
+        payload=$(cat)
+        if [ -n "${FAKE_BW_CAPTURE_STDIN:-}" ]; then
+          log_line "stdin:$payload"
+        fi
+        printf '%s\n' '{"id":"send-saved","name":"Saved Send","type":0}'
+        ;;
+      delete|remove-password)
+        printf '%s\n' "Send updated."
+        ;;
+      *) printf '%s\n' "Unknown send command" >&2; exit 1 ;;
+    esac
+    ;;
+  generate)
+    case " $* " in
+      *" --passphrase "*) printf '%s\n' 'alpha-bravo-charlie-delta' ;;
+      *) printf '%s\n' 'A-fake-password-123!' ;;
+    esac
+    ;;
+  import)
+    if [ "${1:-}" = "--formats" ]; then
+      printf '%s\n' 'bitwardenjson' 'bitwardencsv' 'keepass2xml'
+    else
+      printf '%s\n' "Import successful."
+    fi
+    ;;
+  export)
+    output=""
+    needs_password=""
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --output) output=${2:-}; shift 2 ;;
+        --password) needs_password=1; shift ;;
+        *) shift ;;
+      esac
+    done
+    if [ -n "$needs_password" ]; then
+      printf '%s' "Export file password:" >&2
+      stty -echo 2>/dev/null || true
+      IFS= read -r export_password
+      stty echo 2>/dev/null || true
+      printf '\n' >&2
+      log_line "export-password:${export_password:+set}"
+    fi
+    if [ -n "$output" ]; then
+      printf '%s\n' '{"encrypted":true}' > "$output"
+    fi
+    printf '%s\n' "Export successful."
+    ;;
+  config)
+    printf '%s\n' "Saved setting."
+    ;;
+  *)
+    printf '%s\n' "Unknown fake bw command: $command_name" >&2
+    exit 1
+    ;;
+esac
